@@ -16,7 +16,7 @@ def get_spark_session() -> SparkSession:
         .config("spark.sql.shuffle.partitions", "4")
         .getOrCreate()
     )
-
+    
 # ------------------------------------------------------------------ #
 #  Build staging_fact (80 % DB  +  20 % CSV)                         #
 # ------------------------------------------------------------------ #

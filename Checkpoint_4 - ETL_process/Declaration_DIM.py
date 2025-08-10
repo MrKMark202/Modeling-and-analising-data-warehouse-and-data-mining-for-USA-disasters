@@ -83,7 +83,7 @@ def transform_declaration_dim(
         all_decl.withColumn("declaration_tk", row_number().over(w))
         .withColumn("version", lit(1))
         .withColumn("date_from", current_timestamp())
-        .withColumn("date_to", lit(None).cast("timestamp"))
+        .withColumn("date_to", lit("2200-01-01 00:00:00").cast("timestamp"))
     )
 
     # enforce column order

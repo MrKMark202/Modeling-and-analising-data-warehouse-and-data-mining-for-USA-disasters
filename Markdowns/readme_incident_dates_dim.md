@@ -131,6 +131,3 @@ INCIDENT_DATES_DIM redaka: ≈ 3 605   # 3 604 stvarnih + 1 UNKNOWN
 3. Imaš `surrogate` i `natural` ključ → možeš provjeriti povijesnu promjenu duljine incidenta.
 
 ---
-
-**Autor**: Data Engineering pomoćnik · lipanj 2025.
-

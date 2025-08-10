@@ -85,7 +85,7 @@ def transform_incident_dates_dim(
         all_dates.withColumn("incident_dates_tk", row_number().over(w))
         .withColumn("version", lit(1))
         .withColumn("date_from", current_timestamp())
-        .withColumn("date_to", lit(None).cast("timestamp"))
+        .withColumn("date_to", lit("2200-01-01 00:00:00").cast("timestamp"))
         .select(
             "incident_dates_tk", "version", "date_from", "date_to",
             "incident_begin_date", "incident_end_date", "incident_duration"

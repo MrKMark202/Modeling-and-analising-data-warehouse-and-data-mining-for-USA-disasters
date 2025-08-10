@@ -82,5 +82,3 @@ final_df.write.jdbc(url, "state_dim", mode="overwrite", properties=props)
 Rezultat: **≈ 3 316** redova (3 315 county‑ja + UNKNOWN).
 
 ---
-
-*Autor: Data Engineering pomoćnik · lipanj 2025.*

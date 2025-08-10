@@ -112,6 +112,3 @@ DISASTER_DIM redaka: ≈ 4 272   # 4 271 stvarnih + 1 UNKNOWN
 3. `surrogate` ≠ `natural`: nikad ne koristi `disaster_number` direktno kao foreign key u fact‑tablici.
 
 ---
-
-**Autor**: Data Engineering pomoćnik · lipanj 2025.
-

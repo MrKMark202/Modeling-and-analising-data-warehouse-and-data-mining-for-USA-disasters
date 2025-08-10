@@ -121,6 +121,3 @@ Tablica se potpuno prepiše pri svakom pokretanju ETL‑a (SCD‑type 0 za fact
 3. **Modeliranje**: ovu tablicu možeš agregirati na razine (state, godina, incident_type) za OLAP izvještavanje.
 
 ---
-
-**Autor**: Data Engineering pomoćnik · lipanj 2025.
-
