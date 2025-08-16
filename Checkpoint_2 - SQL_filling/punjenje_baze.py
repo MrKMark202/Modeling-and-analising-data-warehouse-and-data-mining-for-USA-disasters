@@ -14,25 +14,23 @@ session = Session()
 Base = declarative_base()
 
 # Definicija tablica
+
 class State(Base):
     __tablename__ = 'State'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False)
-    country_name = Column(String, nullable=False)
+    state_name = Column(String, nullable=False, unique=True)
+    
+class County(Base):
+    __tablename__ = 'County'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    county_name = Column(String, nullable=False, unique=True)
+    state_fk = Column(Integer, ForeignKey('State.id'), nullable=False)
+    
 
 class Disaster(Base):
     __tablename__ = 'Disaster'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    disaster_number = Column(Integer, nullable=False)
-    incident_type = Column(String, nullable=False)
-    incident_begin_date = Column(Date, nullable=False)
-    incident_end_date = Column(Date, nullable=False)
-    incident_duration = Column(Integer, nullable=False)
-    ih_program_declared = Column(Boolean, nullable=False)
-    ia_program_declared = Column(Boolean, nullable=False)
-    pa_program_declared = Column(Boolean, nullable=False)
-    hm_program_declared = Column(Boolean, nullable=False)
-    deaths = Column(Integer, nullable=False)
+    incident_type = Column(String, nullable=False, unique=True)
 
 class Declaration(Base):
     __tablename__ = 'Declaration'
@@ -41,14 +39,17 @@ class Declaration(Base):
     declaration_type = Column(String, nullable=False)
     declaration_date = Column(Date, nullable=False)
     declaration_request_number = Column(Integer, nullable=False)
+    incident_begin_date = Column(Date, nullable=False)
+    incident_end_date = Column(Date, nullable=False)
+    incident_duration = Column(Integer, nullable=False)
+    ih_program_declared = Column(Boolean, nullable=False)
+    ia_program_declared = Column(Boolean, nullable=False)
+    pa_program_declared = Column(Boolean, nullable=False)
+    hm_program_declared = Column(Boolean, nullable=False)
+    deaths = Column(Integer, nullable=False)
     disaster_fk = Column(Integer, ForeignKey('Disaster.id'), nullable=False)
-    state_fk = Column(Integer, ForeignKey('State.id'), nullable=False)
+    county_fk = Column(Integer, ForeignKey('County.id'), nullable=False)
 
-class DisasteredStates(Base):
-    __tablename__ = 'Disastered_states'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    disaster_fk = Column(Integer, ForeignKey('Disaster.id'), nullable=False)
-    state_fk = Column(Integer, ForeignKey('State.id'), nullable=False)
 
 # Kreiranje tablica
 Base.metadata.create_all(engine)
@@ -56,23 +57,101 @@ Base.metadata.create_all(engine)
 # Funkcija za učitavanje CSV-a i spremanje u bazu pomoću Spark-a
 def load_csv_to_db(csv_path):
     df = spark.read.csv(csv_path, header=True, inferSchema=True)
-
-        # Punjenje tablice State (provjera duplikata)
-    states = df.select("state", "country_name").distinct().collect()
-    for row in states:
-        existing_state = session.query(State).filter_by(country_name=str(row.country_name)).first()
+    
+    #Punjenje tablice State
+    state = df.select("state_name").distinct().collect()
+    for row in state:
+        existing_state = session.query(State).filter_by(state_name=str(row.state_name)).first()
         if not existing_state:
-            session.add(State(name=row.state, country_name=row.country_name))
+            session.add(State(state_name=row.state_name))
+    session.commit()
+    
+    state_rows = df.select("state_name").dropna(subset=["state_name"]).distinct().collect()
+    existing_states = {s.state_name: s.id for s in session.query(State).all()}
+
+    for r in state_rows:
+        sname = str(r.state_name)
+        if sname not in existing_states:
+            s = State(state_name=sname)
+            session.add(s)
+            session.flush()
+            existing_states[sname] = s.id
+    session.commit()
+
+    # --- COUNTY: upiši sve jedinstvene (state_name, county_name) s FK na State ---
+    county_rows = (
+        df.select("state_name", "county_name")
+        .dropna(subset=["state_name", "county_name"])
+        .distinct()
+        .collect()
+    )
+
+    # Ako koristiš UniqueConstraint na (county_name, state_fk), duplikati će ionako pasti;
+    # svejedno je dobro provjeriti prije inserta:
+    # učitaj postojeće county-je u mapu (county_name, state_fk) -> id
+    existing_counties = {}
+    for c in session.query(County).all():
+        existing_counties[(c.county_name, c.state_fk)] = c.id
+
+    for r in county_rows:
+        sname = str(r.state_name)
+        cname = str(r.county_name)
+        sid = existing_states.get(sname)
+        if not sid:
+            # ne bi se smjelo dogoditi jer smo States već popunili, ali za svaki slučaj
+            s = State(state_name=sname)
+            session.add(s); session.flush()
+            sid = s.id
+            existing_states[sname] = sid
+
+        key = (cname, sid)
+        if key not in existing_counties:
+            c = County(county_name=cname, state_fk=sid)
+            session.add(c)
+            session.flush()
+            existing_counties[key] = c.id
     session.commit()
 
     # Punjenje tablice Disaster
-    disasters = df.select("disaster_number", "incident_type", "incident_begin_date", "incident_end_date", "incident_duration","ih_program_declared", "ia_program_declared", "pa_program_declared", "hm_program_declared", "deaths").distinct().collect()
+    disasters = df.select("incident_type").distinct().collect()             
+
     for row in disasters:
-        existing_disaster = session.query(Disaster).filter_by(disaster_number=row.disaster_number).first()
-        if not existing_disaster:
-            disaster = Disaster(
-                disaster_number=row.disaster_number,
+        session.add(
+            Disaster(
                 incident_type=row.incident_type,
+            )
+        )
+    session.commit()
+
+    # Punjenje tablice Declaration
+    declarations = (
+        df.select(
+            "declaration_title", 
+            "declaration_type", 
+            "declaration_date", 
+            "declaration_request_number", 
+            "incident_begin_date",
+            "incident_end_date",
+            "incident_duration",
+            "ih_program_declared",
+            "ia_program_declared",
+            "pa_program_declared",
+            "hm_program_declared",
+            "deaths",
+            "county_name",
+            "incident_type"
+        ).collect()
+    )
+    
+    for row in declarations:
+        disaster = session.query(Disaster).filter_by(incident_type=row.incident_type).first()
+        county = session.query(County).filter_by(county_name=row.county_name).first()
+        if disaster:
+            declaration = Declaration(
+                declaration_title=row.declaration_title,
+                declaration_type=row.declaration_type,
+                declaration_date=row.declaration_date,
+                declaration_request_number=row.declaration_request_number,
                 incident_begin_date=row.incident_begin_date,
                 incident_end_date=row.incident_end_date,
                 incident_duration=row.incident_duration,
@@ -80,36 +159,11 @@ def load_csv_to_db(csv_path):
                 ia_program_declared=row.ia_program_declared,
                 pa_program_declared=row.pa_program_declared,
                 hm_program_declared=row.hm_program_declared,
-                deaths=row.deaths
-            )
-            session.add(disaster)
-    session.commit()
-
-    # Punjenje tablice Declaration
-    declarations = df.select("declaration_title", "declaration_type", "declaration_date", "declaration_request_number", "country_name", "incident_type").distinct().collect()
-    for row in declarations:
-        disaster = session.query(Disaster).filter_by(incident_type=row.incident_type).first()
-        state = session.query(State).filter_by(country_name=row.country_name).first()
-        if disaster:
-            declaration = Declaration(
-                declaration_title=row.declaration_title,
-                declaration_type=row.declaration_type,
-                declaration_date=row.declaration_date,
-                declaration_request_number=row.declaration_request_number,
+                deaths=row.deaths,
                 disaster_fk=disaster.id,
-                state_fk=state.id
+                county_fk=county.id
             )
             session.add(declaration)
-    session.commit()
-
-    # Punjenje tablice DisasteredStates
-    disastered_states = df.select("disaster_number", "country_name").distinct().collect()
-    for row in disastered_states:
-        disaster = session.query(Disaster).filter_by(disaster_number=row.disaster_number).first()
-        state = session.query(State).filter_by(country_name=str(row.country_name)).first()
-        if disaster and state:
-            ds_entry = DisasteredStates(disaster_fk=disaster.id, state_fk=state.id)
-            session.add(ds_entry)
     session.commit()
     print("Podaci uspješno spremljeni u bazu!")
 

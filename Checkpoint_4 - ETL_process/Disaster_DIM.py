@@ -1,28 +1,12 @@
 import sys
 sys.stdout.reconfigure(encoding="utf-8")
 
-"""disaster_dim.py
-
-Generira dimenziju **Disaster_DIM** za star-shemu US‑Disasters DW‑a.
-
-• Prirodni ključ = `disaster_number` (FEMA jedinstveni ID)  
-• Surrogate = `disaster_tk` (deterministički po rastućem `disaster_number`)  
-• SCD‑1 stupci : `version`, `date_from`, `date_to`  
-• Dodaje red *UNKNOWN* (`disaster_tk = 0`) — sprječava gubitak redaka pri LEFT JOIN‑u.
-"""
-
 from datetime import datetime
 from pyspark.sql import SparkSession, Window
-from pyspark.sql.functions import (
-    col,
-    lit,
-    row_number,
-    current_timestamp,
-    coalesce,
-)
+from pyspark.sql.functions import col, lit, row_number, current_timestamp, upper, trim
 
 ################################################################################
-# Spark helper                                                                   #
+# Spark helper
 ################################################################################
 
 def get_spark_session() -> SparkSession:
@@ -33,103 +17,64 @@ def get_spark_session() -> SparkSession:
     )
 
 ################################################################################
-# Transform Disaster_DIM                                                         #
+# Transform Disaster_DIM
 ################################################################################
 
-def transform_disaster_dim(
-    spark: SparkSession,
-    jdbc_cfg: dict,
-    csv_path: str,
-):
-    """Vrati Disaster_DIM DataFrame spreman za load u DW."""
+def transform_disaster_dim(spark: SparkSession, jdbc_cfg: dict, csv_path: str):
+    """
+    Vrati Disaster_DIM DataFrame spreman za load u DW.
 
-    BOOL_COLS = [
-        "ih_program_declared",
-        "ia_program_declared",
-        "pa_program_declared",
-        "hm_program_declared",
-    ]
+    • Prirodni ključ: incident_type (UPPER+TRIM radi konzistencije)
+    • Surrogate key: disaster_tk (1...n po abecedi incident_type)
+    • SCD1 kolone: version, date_from, date_to
+    • UNKNOWN red (disaster_tk = 0)
+    """
 
-    ##################################################################
-    # 1) Extract                                                    #
-    ##################################################################
-    def cast_bool(df):
-        """ Cast boolean stupaca i odaberi korisne kolone. """
-        sel = [col("disaster_number"), col("incident_type")]
-        sel.extend([col(c).cast("boolean").alias(c) for c in BOOL_COLS])
-        return df.select(*sel)
-
-    db_df = cast_bool(
+    # 1) Extract iz OLTP
+    db_df = (
         spark.read.jdbc(
             jdbc_cfg["url"], '"Disaster"', properties=jdbc_cfg["properties"]
         )
+        .select(upper(trim(col("incident_type"))).alias("incident_type"))
     )
 
-    csv_df = cast_bool(
+    # 2) Extract iz CSV
+    csv_df = (
         spark.read.csv(csv_path, header=True, inferSchema=True)
+        .select(upper(trim(col("incident_type"))).alias("incident_type"))
     )
 
-    ##################################################################
-    # 2) Union & deduplicate on natural key                          #
-    ##################################################################
+    # 3) Union & deduplicate
     all_disasters = (
         db_df.unionByName(csv_df)
-        .dropna(subset=["disaster_number"])
-        .dropDuplicates(["disaster_number"])  # <-- jedan red po disasteru!
+        .dropna(subset=["incident_type"])
+        .dropDuplicates(["incident_type"])
     )
 
-    ##################################################################
-        ##################################################################
-    # 3) Surrogate key + SCD columns                                 #
-    ##################################################################
-    w = Window.orderBy("disaster_number")
+    # 4) Surrogate key & SCD kolone
+    w = Window.orderBy("incident_type")
     dim = (
         all_disasters.withColumn("disaster_tk", row_number().over(w))
         .withColumn("version", lit(1))
         .withColumn("date_from", current_timestamp())
         .withColumn("date_to", lit("2200-01-01 00:00:00").cast("timestamp"))
+        .select("disaster_tk", "version", "date_from", "date_to", "incident_type")
     )
 
-    # Reorder columns to deterministic schema
-    COL_ORDER = [
-        "disaster_tk",
-        "version",
-        "date_from",
-        "date_to",
-        "disaster_number",
-        "incident_type",
-        *BOOL_COLS,
-    ]
-    dim = dim.select(*COL_ORDER)
-
-    ##################################################################
-    # ---- UNKNOWN row ---------------------------------------------- -----------------------------------------------------
-    # 1) Preuzmi shemu iz dim (sigurno odgovara vrstama)
+    # 5) UNKNOWN red
     schema = dim.schema
-
-    unknown_row = (
-        0,                  # disaster_tk
-        1,                  # version
-        datetime.utcnow(),  # date_from
-        None,               # date_to
-        None,               # disaster_number
-        None,               # incident_type
-        False,
-        False,
-        False,
-        False,
-    )
-
+    unknown_row = (0, 1, datetime.utcnow(), None, "UNKNOWN")
     unknown_df = spark.createDataFrame([unknown_row], schema=schema)
-    final_df = unknown_df.unionByName(dim)
 
+    final_df = unknown_df.unionByName(dim)
 
     print("DISASTER_DIM redaka:", final_df.count())
     return final_df
 
 ################################################################################
-# Main entry                                                                     #
+# Main entry
 ################################################################################
+
 if __name__ == "__main__":
     spark = get_spark_session()
 

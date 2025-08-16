@@ -44,7 +44,7 @@ def transform_incident_dates_dim(
 
     # -------- Extract iz baze --------------------------------------
     db_dates = (
-        spark.read.jdbc(jdbc_cfg["url"], '"Disaster"',
+        spark.read.jdbc(jdbc_cfg["url"], '"Declaration"',
                         properties=jdbc_cfg["properties"])
         .select(
             to_date(col("incident_begin_date")).alias("incident_begin_date"),
